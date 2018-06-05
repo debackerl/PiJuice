@@ -12,39 +12,33 @@ import threading
 import time
 from fcntl import ioctl
 
-from smbus import SMBus
-
 pijuice_hard_functions = ['HARD_FUNC_POWER_ON', 'HARD_FUNC_POWER_OFF', 'HARD_FUNC_RESET']
 pijuice_sys_functions = ['SYS_FUNC_HALT', 'SYS_FUNC_HALT_POW_OFF', 'SYS_FUNC_SYS_OFF_HALT', 'SYS_FUNC_REBOOT']
 pijuice_user_functions = ['USER_EVENT'] + ['USER_FUNC' + str(i+1) for i in range(0, 15)]
 
+I2C_SLAVE = 0x0703  # Use this slave address
+I2C_SLAVE_FORCE = 0x0706  # Use this slave address, even if
+                          # is already in use by a driver!
 
 class PiJuiceInterface(object):
-    I2C_SLAVE = 0x0703  # Use this slave address
-    I2C_SLAVE_FORCE = 0x0706  # Use this slave address, even if
-                                # is already in use by a driver!
-    I2C_PEC = 0x0708  # != 0 to use PEC with SMBus
-
     def __init__(self, bus=1, address=0x14):
         """Create a new PiJuice instance.  Bus is an optional parameter that
         specifies the I2C bus number to use, for example 1 would use device
         /dev/i2c-1.  If bus is not specified then the open function should be
         called to open the bus.
         """
-        self.i2cbus = SMBus(bus)
         self.addr = address
-        # self._device = open('/dev/i2c-{0}'.format(bus), 'r+b', buffering=0)
-        # ioctl(self._device.fileno(), I2C_SLAVE_FORCE, self.addr & 0x7F)
+        self._device = open('/dev/i2c-{0}'.format(bus), 'r+b', buffering=0)
+        ioctl(self._device.fileno(), I2C_SLAVE_FORCE, self.addr & 0x7F)
         self.t = None
         self.comError = False
         self.errTime = 0
 
     def __del__(self):
         """Clean up any resources used by the PiJuice instance."""
-        self.i2cbus = None
-        # if self._device is not None:
-        #     self._device.close()
-        #     self._device = None
+        if self._device is not None:
+            self._device.close()
+            self._device = None
 
     def __enter__(self):
         """Context manager enter function."""
@@ -53,10 +47,9 @@ class PiJuiceInterface(object):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit function, ensures resources are cleaned up."""
-        # if self._device is not None:
-        #     self._device.close()
-        #     self._device = None
-        self.i2cbus = None
+        if self._device is not None:
+            self._device.close()
+            self._device = None
         return False  # Don't suppress exceptions
 
     def GetAddress(self):
@@ -72,11 +65,8 @@ class PiJuiceInterface(object):
         #if self.comError and (time.time()-self.errTime) < 4:
         #	self.d = None
         try:
-            d = self.i2cbus.read_i2c_block_data(self.addr, self.cmd, self.length)
-            #self._device.write(cmdData)
-            #d = [byte for byte in bytearray(self._device.read(length + 1))]
-            #return d
-            self.d = d
+            self._device.write(bytearray([self.cmd]))
+            self.d = [byte for byte in bytearray(self._device.read(self.length))]
             self.comError = False
         except:  # IOError:
             self.comError = True
@@ -85,10 +75,7 @@ class PiJuiceInterface(object):
 
     def _Write(self):
         try:
-            self.i2cbus.write_i2c_block_data(self.addr, self.cmd, self.d)
-            #self._device.write(cmdData)
-            #d = [byte for byte in bytearray(self._device.read(length + 1))]
-            #return d
+            self._device.write(bytearray([self.cmd] + self.d))
             self.comError = False
         except:  # IOError:
             self.comError = True
