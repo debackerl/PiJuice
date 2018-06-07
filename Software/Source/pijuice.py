@@ -10,6 +10,7 @@ import struct
 import sys
 import threading
 import time
+import portalocker
 from fcntl import ioctl
 
 pijuice_hard_functions = ['HARD_FUNC_POWER_ON', 'HARD_FUNC_POWER_OFF', 'HARD_FUNC_RESET']
@@ -28,7 +29,8 @@ class PiJuiceInterface(object):
         called to open the bus.
         """
         self.addr = address
-        self._device = open('/dev/i2c-{0}'.format(bus), 'r+b', buffering=0)
+        self._path = '/dev/i2c-{0}'.format(bus)
+        self._device = open(self._path, 'r+b', buffering=0)
         ioctl(self._device.fileno(), I2C_SLAVE_FORCE, self.addr & 0x7F)
         self.t = None
         self.comError = False
@@ -64,22 +66,24 @@ class PiJuiceInterface(object):
     def _Read(self):
         #if self.comError and (time.time()-self.errTime) < 4:
         #	self.d = None
-        try:
-            self._device.write(bytearray([self.cmd]))
-            self.d = [byte for byte in bytearray(self._device.read(self.length))]
-            self.comError = False
-        except:  # IOError:
-            self.comError = True
-            self.errTime = time.time()
-            self.d = None
+        with portalocker.Lock(self._path, timeout=4) as l:
+            try:
+                self._device.write(bytearray([self.cmd]))
+                self.d = [byte for byte in bytearray(self._device.read(self.length))]
+                self.comError = False
+            except:  # IOError:
+                self.comError = True
+                self.errTime = time.time()
+                self.d = None
 
     def _Write(self):
-        try:
-            self._device.write(bytearray([self.cmd] + self.d))
-            self.comError = False
-        except:  # IOError:
-            self.comError = True
-            self.errTime = time.time()
+        with portalocker.Lock(self._path, timeout=4) as l:
+            try:
+                self._device.write(bytearray([self.cmd] + self.d))
+                self.comError = False
+            except:  # IOError:
+                self.comError = True
+                self.errTime = time.time()
 
     def _DoTransfer(self, oper):
         if (self.t != None and self.t.isAlive()) or (self.comError and (time.time()-self.errTime) < 4):
